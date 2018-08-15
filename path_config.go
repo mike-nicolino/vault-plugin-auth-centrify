@@ -181,10 +181,10 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 // Config returns the configuration for this backend.
 func (b *backend) Config(ctx context.Context, s logical.Storage) (*cloudClientConfig, error) {
-	b.mux.Lock()
-	defer b.mux.Unlock()
+	b.configMux.Lock()
+	defer b.configMux.Unlock()
 
-	if b.config.expired() {
+	if b.clientConfig.expired() {
 		// Prefer env config if available
 		configPath, found := os.LookupEnv("CENTRIFY_VAULT_CONFIGPATH")
 		if found && configPath != "" {
@@ -194,7 +194,7 @@ func (b *backend) Config(ctx context.Context, s logical.Storage) (*cloudClientCo
 				return nil, fmt.Errorf("error reading configuration from path '%s': %v", configPath, err)
 			}
 
-			err = json.Unmarshal(fileBytes, &b.config)
+			err = json.Unmarshal(fileBytes, &b.clientConfig)
 			if err != nil {
 				return nil, fmt.Errorf("error demarshalling configuration from path '%s': %v", configPath, err)
 			}
@@ -206,15 +206,16 @@ func (b *backend) Config(ctx context.Context, s logical.Storage) (*cloudClientCo
 			}
 
 			if entry != nil {
-				if err := entry.DecodeJSON(&b.config); err != nil {
+				if err := entry.DecodeJSON(&b.clientConfig); err != nil {
 					return nil, fmt.Errorf("error decoding configuration: %v", err)
 				}
 			}
 		}
-		b.config.created = time.Now()
+		b.clientConfig.created = time.Now()
 	}
 
-	return &b.config, nil
+	result := b.clientConfig
+	return &result, nil
 }
 
 type cloudClientConfig struct {

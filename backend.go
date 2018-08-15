@@ -44,8 +44,8 @@ func Backend() *backend {
 
 type backend struct {
 	*framework.Backend
-	config cloudClientConfig
-	mux    sync.Mutex
+	clientConfig cloudClientConfig
+	configMux    sync.Mutex
 }
 
 const backendHelp = `
