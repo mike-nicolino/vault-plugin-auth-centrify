@@ -2,6 +2,7 @@ package centrify
 
 import (
 	"context"
+	"sync"
 
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
@@ -43,6 +44,8 @@ func Backend() *backend {
 
 type backend struct {
 	*framework.Backend
+	config cloudClientConfig
+	mux    sync.Mutex
 }
 
 const backendHelp = `

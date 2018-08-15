@@ -2,8 +2,12 @@ package centrify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/url"
+	"os"
+	"time"
 
 	"github.com/hashicorp/vault/helper/policyutil"
 	"github.com/hashicorp/vault/logical"
@@ -74,7 +78,7 @@ func (b *backend) pathConfigCreateOrUpdate(ctx context.Context, req *logical.Req
 	}
 
 	if cfg == nil {
-		cfg = &config{}
+		cfg = &cloudClientConfig{}
 	}
 
 	val, ok := data.GetOk("client_id")
@@ -139,6 +143,7 @@ func (b *backend) pathConfigCreateOrUpdate(ctx context.Context, req *logical.Req
 	url.Path = ""
 	cfg.ServiceURL = url.String()
 
+	cfg.created = time.Now()
 	entry, err := logical.StorageEntryJSON("config", cfg)
 
 	if err != nil {
@@ -175,31 +180,56 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 }
 
 // Config returns the configuration for this backend.
-func (b *backend) Config(ctx context.Context, s logical.Storage) (*config, error) {
-	entry, err := s.Get(ctx, "config")
+func (b *backend) Config(ctx context.Context, s logical.Storage) (*cloudClientConfig, error) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
 
-	if err != nil {
-		return nil, err
-	}
+	if b.config.expired() {
+		// Prefer env config if available
+		configPath, found := os.LookupEnv("CENTRIFY_VAULT_CONFIGPATH")
+		if found && configPath != "" {
+			b.Logger().Trace("Get config from env, path: ", configPath)
+			fileBytes, err := ioutil.ReadFile(configPath)
+			if err != nil {
+				return nil, fmt.Errorf("error reading configuration from path '%s': %v", configPath, err)
+			}
 
-	var result config
-	if entry != nil {
-		if err := entry.DecodeJSON(&result); err != nil {
-			return nil, fmt.Errorf("error reading configuration: %s", err)
+			err = json.Unmarshal(fileBytes, &b.config)
+			if err != nil {
+				return nil, fmt.Errorf("error demarshalling configuration from path '%s': %v", configPath, err)
+			}
+		} else {
+			b.Logger().Trace("Get config from vault")
+			entry, err := s.Get(ctx, "config")
+			if err != nil {
+				return nil, err
+			}
+
+			if entry != nil {
+				if err := entry.DecodeJSON(&b.config); err != nil {
+					return nil, fmt.Errorf("error decoding configuration: %v", err)
+				}
+			}
 		}
-		return &result, nil
+		b.config.created = time.Now()
 	}
 
-	return nil, nil
+	return &b.config, nil
 }
 
-type config struct {
+type cloudClientConfig struct {
 	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret"`
+	ClientSecret string   `json:"client_secret,omitempty"`
 	ServiceURL   string   `json:"service_url"`
 	AppID        string   `json:"app_id"`
 	Scope        string   `json:"scope"`
 	Policies     []string `json:"policies"`
+	created      time.Time
+}
+
+func (c cloudClientConfig) expired() bool {
+	var lifespan = 5 * time.Minute
+	return c.created.Add(lifespan).Before(time.Now())
 }
 
 const pathSyn = `
